@@ -1,0 +1,124 @@
+---
+title: "Vignette Data Prepare"
+author: "Adam M. Wilson, Cory Merow, & Walter Jetz"
+date: "Februrary 2016"
+output:
+    rmarkdown::html_vignette:
+      fig_caption: yes
+      keep_md: true
+      keep_html: true
+---
+
+```{r, echo=FALSE, message=FALSE, results='hide', purl=FALSE}
+knitr::opts_chunk$set(cache=T,fig.width=5,fig.height=5,dpi=125)
+```
+
+## Packages
+```{r, message=F}
+# packages used for the data generation
+library(raster)
+library(rasterVis)
+library(tidyr)
+library(dplyr)
+library(geosphere)
+library(maptools)
+library(mapdata)
+library(bossMaps)
+library(rMOL)
+```
+
+### Install `rMOL` and `bossMaps` packages
+
+```{r, message=F,echo=F}
+#devtools::install_github("MapofLife/rMOL")#, ref="7622634")
+#devtools::install_github("adammwilson/bossMaps",)
+#devtools::install_local("~/repos/bossMaps_0.1.tgz")
+```
+
+## Download Worldclim bioclim variables
+```{r}
+env=getData('worldclim', var='bio', res=10)
+env=env[[c(1,12)]]
+```
+
+## Define modelling domain as the worldclim grid
+```{r}
+domain=raster(env,layer=0)
+```
+
+## Download Species data
+```{r,results="hide"}
+species=c("Tinamus_solitarius")
+
+dsp=MOLget(species,type=c("points","range"))
+plot(env[[1]]);plot(dsp$points,add=T);plot(dsp$range,add=T,border="red")
+```
+
+
+## crude cleaning of species data (within 1000km of expert range)  
+```{r}
+dsp=MOLclean(dsp,dropdist=1000,drop=T)
+plot(env[[1]]);plot(dsp$points,add=T);plot(dsp$range,add=T,border="red")
+```
+
+### Extract range and points
+```{r}
+points=dsp$points
+range=dsp$range
+```
+
+## Calculate range distances
+```{r}
+
+fdist=paste0(species,"_rangeDist.tif")
+  if(!file.exists(fdist)) {
+    ## calculate distance-to-range: this is slow but only has to be done once per species.
+    ## Can speed it up by increasing fact (at the expense of lower accuracy).
+    rdist=rangeDist(range,points,domain,domainkm=3000,mask=F,fact=2)    
+    ## Mask out undesired areas (ocean, etc.)
+    ## Typically you would do this using your environmental data,
+    ## but here we'll just use a coastline polygon from the maps package
+  land=map(interior=F,fill=T,xlim=bbox(rdist)[1,],ylim=bbox(rdist)[2,],plot=F)
+  land=map2SpatialPolygons(land,IDs=land$names)
+
+  rdist=mask(rdist,land)
+  rdist=trim(rdist,padding=10,file=fdist,overwrite=T)
+  }
+
+rdist=raster(fdist)
+names(rdist)="rangeDist"
+
+
+
+plot(rdist);plot(range,add=T);plot(points,add=T)
+```
+
+## Process environmental data
+
+```{r}
+  fo=paste0(species,"_env.grd")
+  if(!file.exists(fo)){
+  land=map(interior=F,fill=T,xlim=bbox(rdist)[1,],ylim=bbox(rdist)[2,],plot=F)
+  land=map2SpatialPolygons(land,IDs=land$names)
+    td=crop(env,rdist)
+      mask(td,land,file=fo,overwrite=T)
+      senv=writeRaster(td,file=sub("env","senv",fo),overwrite=T)
+}
+senv=stack(sub("env","senv",fo))
+plot(senv)
+```
+
+## Save the data to the package
+
+```{r}
+Tinamus_solitarius_env=readAll(senv)
+devtools::use_data(Tinamus_solitarius_env)
+
+Tinamus_solitarius_points=points
+Tinamus_solitarius_range=range
+  
+#save it
+devtools::use_data(Tinamus_solitarius_points,overwrite=T)
+devtools::use_data(Tinamus_solitarius_range,overwrite=T)
+
+```
